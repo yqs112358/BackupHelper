@@ -9,21 +9,41 @@
 #include <windows.h>
 #include <ctime>
 #include <locale.h>
-#include "HelpFuncs.h"
 
 using namespace std;
 
+wstring CONFIG_PATH;
 wstring WORLD_PATH;
 wstring BACKUP_PATH;
 wstring TMP_PATH;
 wstring ZIP_PATH;
 wstring ZIP_LOG_PATH;
 wstring END_RESULT;
-string RECORD_FILE;
+wstring RECORD_FILE;
 int BUFFER_SIZE;
 bool SHOW_COPY_PROCESS;
 int GROUP_OF_FILES;
 int MAX_ZIP_WAIT;
+
+wstring readConfig(const wstring& sec, const wstring& key, wstring def = L""
+    , const unsigned int len = MAX_PATH)
+{
+    wchar_t* buf = new wchar_t[len + 1];
+    wstring res(GetPrivateProfileStringW(sec.c_str(), key.c_str(), def.c_str()
+        , buf, len, CONFIG_PATH.c_str()) > 0 ? wstring(buf) : def);
+    delete[] buf;
+    return res;
+}
+
+int readConfig(const wstring& sec, const wstring& key, const int def = 0)
+{
+    return int(GetPrivateProfileInt(sec.c_str(), key.c_str(), def, CONFIG_PATH.c_str()));
+}
+
+bool writeConfig(const wstring& sec, const wstring& key, const wstring value)
+{
+    return WritePrivateProfileString(sec.c_str(), key.c_str(), value.c_str(), CONFIG_PATH.c_str());
+}
 
 void clearTemp()
 {
@@ -108,11 +128,19 @@ bool copyFile(const wstring& fromFile, const wstring& toFile, long long size)
     return true;
 }
 
-int main(int argc,char ** argv)
+int wmain(int argc,wchar_t ** argv)
 {
     //setlocale(LC_ALL, "");
 
     //Init local config
+    if (argc <= 1)
+    {
+        printf("[BackupProcess][Error] Need config.ini as an argument!\r\n");
+        exit(-1);
+    }
+    else
+        CONFIG_PATH = wstring(argv[1]);
+
     WORLD_PATH = readConfig(L"Core", L"WorldsPath", L".\\worlds\\");
     if (WORLD_PATH[WORLD_PATH.size() - 1] != L'\\')
         WORLD_PATH += L"\\";
@@ -124,7 +152,7 @@ int main(int argc,char ** argv)
         TMP_PATH += L"\\";
     ZIP_PATH = readConfig(L"Core", L"7zPath", L".\\plugins\\BackupHelper\\7za.exe");
     END_RESULT = readConfig(L"Core", L"ResultPath", L".\\plugins\\BackupHelper\\end.res");
-    RECORD_FILE = readConfig("Core", "BackupList", "");
+    RECORD_FILE = readConfig(L"Core", L"BackupList", L"");
     ZIP_LOG_PATH = readConfig(L"Core", L"7zLog", L"");
 
     BUFFER_SIZE = readConfig(L"Core", L"BufferSize", 16384);
@@ -134,13 +162,13 @@ int main(int argc,char ** argv)
 
     if (RECORD_FILE.empty())
     {
-        if (argc <= 1)
+        if (argc <= 2)
         {
             printf("[BackupProcess][Error] Need more argument!\r\n");
-            failExit(errno);
+            failExit(-1);
         }
         else
-            RECORD_FILE = string(argv[1]);
+            RECORD_FILE = wstring(argv[2]);
     }
 
 
@@ -148,8 +176,7 @@ int main(int argc,char ** argv)
     //Read record file and Copy Save files
     printf("[BackupProcess] Backup process begin\r\n");
 
-    FILE* fp;
-    fopen_s(&fp,RECORD_FILE.c_str(), "r");
+    FILE* fp = _wfopen(RECORD_FILE.c_str(), L"r");
     if (fp == NULL)
     {
         printf("[BackupProcess][Error] Failed to open Record File!\r\n");
