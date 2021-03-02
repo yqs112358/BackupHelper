@@ -114,8 +114,14 @@ int main(int argc,char ** argv)
 
     //Init local config
     WORLD_PATH = readConfig(L"Core", L"WorldsPath", L".\\worlds\\");
+    if (WORLD_PATH[WORLD_PATH.size() - 1] != L'\\')
+        WORLD_PATH += L"\\";
     BACKUP_PATH = readConfig(L"Core", L"BackupPath", L".\\backup\\");
+    if (BACKUP_PATH[BACKUP_PATH.size() - 1] != L'\\')
+        BACKUP_PATH += L"\\";
     TMP_PATH = readConfig(L"Core", L"TempPath", L".\\plugins\\BackupHelper\\temp\\");
+    if (TMP_PATH[TMP_PATH.size() - 1] != L'\\')
+        TMP_PATH += L"\\";
     ZIP_PATH = readConfig(L"Core", L"7zPath", L".\\plugins\\BackupHelper\\7za.exe");
     END_RESULT = readConfig(L"Core", L"ResultPath", L".\\plugins\\BackupHelper\\end.res");
     RECORD_FILE = readConfig("Core", "BackupList", "");
