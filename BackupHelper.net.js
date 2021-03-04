@@ -3,7 +3,7 @@
 // 作者：yqs112358
 // 首发平台：MineBBS
 
-var _VER = '1.3.0';
+var _VER = '1.3.2';
 var _CONFIG_FILE = '.\\plugins\\BackupHelper\\config.ini'
 
 var waitingRecord = false;
@@ -107,12 +107,24 @@ function checkSave() {
         setTimeout(waitForSave, 2000);
 }
 
+function clearOldBackup()
+{
+    if(_MAX_SAVE_TIME >= 0)
+    {
+        _LOG('[Info] 备份最长保存时间：' + _MAX_SAVE_TIME + '天');
+        let beforeTime = new Date().getTime() / 1000 - _MAX_SAVE_TIME * 86400;
+        runcmd('system ' + _BACKUP_RUNNER + ' "' + _CONFIG_FILE + '" -c "' + String(beforeTime) + '"');
+    }
+}
+
 function startBackup()
 {
     if (isBackuping)
         _LOG('[Error] 已有备份正在执行中，请耐心等待完成。');
     else {
         isBackuping = true;
+        clearOldBackup();
+
         let res = fileReadAllText(_BACKUP_RESULT);
         if (res != null)
             runcmd('system del ' + _BACKUP_RESULT)
