@@ -45,22 +45,43 @@ bool writeConfig(const wstring& sec, const wstring& key, const wstring value)
     return WritePrivateProfileString(sec.c_str(), key.c_str(), value.c_str(), CONFIG_PATH.c_str());
 }
 
-void clearTemp()
+bool clearFile(wstring file)
 {
-    wchar_t cmdStr[MAX_PATH] = L"rd /S /Q ";
-    wcscat_s(cmdStr, TMP_PATH.c_str());
+    return DeleteFile(file.c_str());
+}
 
-    STARTUPINFO si = { sizeof(STARTUPINFO) };
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    ZeroMemory(&pi, sizeof(pi));
-    if (CreateProcessW(NULL, cmdStr, NULL, NULL, false, 0, NULL, NULL, &si, &pi))
-        WaitForSingleObject(pi.hProcess, MAX_ZIP_WAIT);
+bool clearDir(wstring dir)
+{
+    if (dir[dir.size() - 1] == L'\\')
+        dir.pop_back();
+    WIN32_FIND_DATA findFileData;
+    wstring dirFind = dir + L"\\*";
+
+    HANDLE hFind = FindFirstFile(dirFind.c_str(), &findFileData);
+    if (hFind == INVALID_HANDLE_VALUE)
+        return false;
+    do
+    {
+        if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+        {
+            if (wcscmp(findFileData.cFileName, L".") != 0
+                && wcscmp(findFileData.cFileName, L"..") != 0)
+            {
+                wstring target = dir + L"\\" + findFileData.cFileName;
+                clearDir(target);
+            }
+        }
+        else
+            clearFile(dir + L"\\" + findFileData.cFileName);
+    } while (FindNextFile(hFind, &findFileData));
+    FindClose(hFind);
+    RemoveDirectory(dir.c_str());
+    return true;
 }
 
 void failExit(int code)
 {
-    clearTemp();
+    clearDir(TMP_PATH);
     printf("[BackupProcess][FATAL] Backup failed. Error Code: %d", code);
     //Flag to fail
     FILE* fp = _wfopen(END_RESULT.c_str(), L"w");
@@ -128,9 +149,45 @@ bool copyFile(const wstring& fromFile, const wstring& toFile, long long size)
     return true;
 }
 
+int clearOldBackup(wstring beforeTimestamp)
+{
+    unsigned long long timeStamp = _wtoll(beforeTimestamp.c_str());
+    wstring dirFind = BACKUP_PATH + L"*";
+    WIN32_FIND_DATA findFileData;
+    ULARGE_INTEGER createTime;
+    int clearCount = 0;
+
+    HANDLE hFind = FindFirstFile(dirFind.c_str(), &findFileData);
+    if (hFind == INVALID_HANDLE_VALUE)
+    {
+        printf("[BackupProcess][Warning] Fail to locate old backups.\r\n");
+        return GetLastError();
+    }
+    do
+    {
+        if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            continue;
+        else
+        {
+            createTime.LowPart = findFileData.ftCreationTime.dwLowDateTime;
+            createTime.HighPart = findFileData.ftCreationTime.dwHighDateTime;
+            if (createTime.QuadPart / 10000000 - 11644473600 < timeStamp)
+            {
+                clearFile(BACKUP_PATH + findFileData.cFileName);
+                ++clearCount;
+            }
+        }
+    } while (FindNextFile(hFind, &findFileData));
+    FindClose(hFind);
+    if(clearCount > 0)
+        printf("[BackupProcess][Info] %d old backups cleaned.\r\n",clearCount);
+    return 0;
+}
+
 int wmain(int argc,wchar_t ** argv)
 {
     //setlocale(LC_ALL, "");
+    setbuf(stdout, NULL);
 
     //Init local config
     if (argc <= 1)
@@ -159,6 +216,11 @@ int wmain(int argc,wchar_t ** argv)
     SHOW_COPY_PROCESS = bool(readConfig(L"Main", L"ShowBackupProcess", 1));
     GROUP_OF_FILES = readConfig(L"Main", L"BackupProcessCount", 10);
     MAX_ZIP_WAIT = readConfig(L"Core", L"MaxWaitForZip", 3600) * 1000;
+
+    if (argc == 4 && wcscmp(argv[2], L"-c") == 0)
+    {
+        return clearOldBackup(argv[3]);
+    }
 
     if (RECORD_FILE.empty())
     {
