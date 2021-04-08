@@ -3,7 +3,7 @@
 // 作者：yqs112358
 // 首发平台：MineBBS
 
-var _VER = '1.3.2';
+var _VER = '1.3.5';
 var _CONFIG_FILE = '.\\plugins\\BackupHelper\\config.ini'
 
 var waitingRecord = false;
@@ -46,6 +46,28 @@ function buildDirTree(dest) {
 }
 
 function initLocalConfig() {
+    if(typeof(systemCmd) != "function")
+    {
+        _LOG("[FATAL] ================== 加载失败 ==================");
+        _LOG("[FATAL] 您的JsRunner版本过低，备份插件无法工作");
+        _LOG("[FATAL] 请更新至最新版本再加载此插件");
+        _LOG("[FATAL] ============================================");
+        throw new Error("请更新你的JsRunner到最新版！");
+    }
+
+    try
+    {
+        systemCmd('ver > nul',function(e){});
+    }
+    catch(e)
+    {
+        _LOG("[FATAL] ================== 加载失败 ==================");
+        _LOG("[FATAL] 您的JsRunner未启用 系统命令功能，备份插件无法工作");
+        _LOG("[FATAL] 请到相应的配置文件中启用SystemCmdEnabled设置项后再加载此插件");
+        _LOG("[FATAL] ============================================");
+        throw new Error("请启用SystemCmd函数权限！");
+    }
+
     mkdir('.\\plugins');
     mkdir('.\\plugins\\BackupHelper');
 
@@ -113,7 +135,7 @@ function clearOldBackup()
     {
         _LOG('[Info] 备份最长保存时间：' + _MAX_SAVE_TIME + '天');
         let beforeTime = new Date().getTime() / 1000 - _MAX_SAVE_TIME * 86400;
-        runcmd('system ' + _BACKUP_RUNNER + ' "' + _CONFIG_FILE + '" -c "' + String(beforeTime) + '"');
+        systemCmd(_BACKUP_RUNNER + ' "' + _CONFIG_FILE + '" -c "' + String(beforeTime) + '"', function(e){} );
     }
 }
 
@@ -127,9 +149,9 @@ function startBackup()
 
         let res = fileReadAllText(_BACKUP_RESULT);
         if (res != null)
-            runcmd('system del ' + _BACKUP_RESULT)
+            systemCmd('del ' + _BACKUP_RESULT, function(e){} );
 
-        res = runcmd('save hold')
+        res = runcmd('save hold');
         if (!res)
             _LOG('[Error] 存档备份数据获取失败。备份失败！');
         else {
@@ -149,12 +171,12 @@ function resumeBackup() {
         if (res == "0")
         {
             _LOG('[Info] 备份成功结束。');
-            runcmd('system del ' + _BACKUP_RESULT);
-            runcmd('system del ' + _BACKUP_LIST);
+            systemCmd('del ' + _BACKUP_RESULT, function(e){} );
+            systemCmd('del ' + _BACKUP_LIST, function(e){} );
         }
         else
             _LOG('[Error] 备份失败！错误码：' + res);
-        runcmd('system rd /S /Q ' + _TEMP_PATH)
+        systemCmd('rd /S /Q ' + _TEMP_PATH, function(e){} )
         isBackuping = false;
     }
 }
@@ -221,8 +243,10 @@ addBeforeActListener('onServerCmdOutput', function (e) {
         _LOG('[Info] 处理完毕。清单已输出到文件：BDS目录' + _BACKUP_LIST);
         _LOG('[Info] 启动备份进程...');
 
-        let res = runcmd('system ' + _BACKUP_RUNNER + ' "' + _CONFIG_FILE + '" "' + _BACKUP_LIST + '"');
-        if (!res) {
+        let exitCode = 0;
+        let res = systemCmd(_BACKUP_RUNNER + ' "' + _CONFIG_FILE + '" "' + _BACKUP_LIST + '"'
+            , function(e){ exitCode = e.exitCode;} );
+        if (!res || exitCode != 0) {
             _LOG('[Error] 备份进程启动失败。备份失败！');
             isBackuping = false;
             return true;

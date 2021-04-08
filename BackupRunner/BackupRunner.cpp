@@ -4,11 +4,11 @@
 // 首发平台：MineBBS
 #define _CRT_SECURE_NO_WARNINGS
 
-#include <cstdio>
 #include <string>
+#include <iostream>
+#include <fstream>
 #include <windows.h>
 #include <ctime>
-#include <locale.h>
 
 using namespace std;
 
@@ -25,7 +25,7 @@ bool SHOW_COPY_PROCESS;
 int GROUP_OF_FILES;
 int MAX_ZIP_WAIT;
 
-wstring readConfig(const wstring& sec, const wstring& key, wstring def = L""
+wstring ReadConfig(const wstring& sec, const wstring& key, wstring def = L""
     , const unsigned int len = MAX_PATH)
 {
     wchar_t* buf = new wchar_t[len + 1];
@@ -35,24 +35,39 @@ wstring readConfig(const wstring& sec, const wstring& key, wstring def = L""
     return res;
 }
 
-int readConfig(const wstring& sec, const wstring& key, const int def = 0)
+int ReadConfig(const wstring& sec, const wstring& key, const int def = 0)
 {
     return int(GetPrivateProfileInt(sec.c_str(), key.c_str(), def, CONFIG_PATH.c_str()));
 }
 
-bool writeConfig(const wstring& sec, const wstring& key, const wstring value)
+bool WriteConfig(const wstring& sec, const wstring& key, const wstring value)
 {
     return WritePrivateProfileString(sec.c_str(), key.c_str(), value.c_str(), CONFIG_PATH.c_str());
 }
 
-bool clearFile(wstring file)
+wstring U8str2wchar(const string& u8str)
+{
+    size_t targetLen = MultiByteToWideChar(CP_UTF8, 0, u8str.c_str(), -1, NULL, 0);
+    if (targetLen == ERROR_NO_UNICODE_TRANSLATION || targetLen == 0)
+        return L"";
+    wchar_t *res = new wchar_t[targetLen+1];
+    ZeroMemory(res, sizeof(wchar_t) * (targetLen + 1));
+    size_t resLen = MultiByteToWideChar(CP_UTF8, 0, u8str.c_str(), -1, res, targetLen);
+    wstring resStr = wstring(res);
+
+    delete[] res;
+    return resStr;
+}
+
+
+bool DelFile(wstring file)
 {
     return DeleteFile(file.c_str());
 }
 
-bool clearDir(wstring dir)
+bool DelDir(wstring dir)
 {
-    if (dir[dir.size() - 1] == L'\\')
+    if (dir.back() == L'\\')
         dir.pop_back();
     WIN32_FIND_DATA findFileData;
     wstring dirFind = dir + L"\\*";
@@ -68,59 +83,45 @@ bool clearDir(wstring dir)
                 && wcscmp(findFileData.cFileName, L"..") != 0)
             {
                 wstring target = dir + L"\\" + findFileData.cFileName;
-                clearDir(target);
+                DelDir(target);
             }
         }
         else
-            clearFile(dir + L"\\" + findFileData.cFileName);
+            DelFile(dir + L"\\" + findFileData.cFileName);
     } while (FindNextFile(hFind, &findFileData));
     FindClose(hFind);
     RemoveDirectory(dir.c_str());
     return true;
 }
 
-void failExit(int code)
+void FailExit(int code)
 {
-    clearDir(TMP_PATH);
-    printf("[BackupProcess][FATAL] Backup failed. Error Code: %d", code);
+    DelDir(TMP_PATH);
+    cout << "[BackupProcess][FATAL] Backup failed. Error Code: " << code << endl;
     //Flag to fail
-    FILE* fp = _wfopen(END_RESULT.c_str(), L"w");
-    fprintf(fp, "%d", code);
-    fclose(fp);
+    ofstream fout(END_RESULT);
+    fout << code;
+    fout.close();
 
     fflush(stdout);
     exit(code);
 }
 
-void transStr(wchar_t* str)
-{
-    do
-    {
-        if (*str == L'/')
-            *str = L'\\';
-        if (*str == L'\r' || *str == L'\n')
-        {
-            *str = L'\0';
-            break;
-        }
-    } while (*str++ != L'\0');
-}
-
-bool copyFile(const wstring& fromFile, const wstring& toFile, long long size)
+bool CopyFile(const wstring& fromFile, const wstring& toFile, long long size)
 {
     HANDLE fFrom = CreateFile(fromFile.c_str(), GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_WRITE , NULL,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (fFrom == INVALID_HANDLE_VALUE)
     {
-        printf("[BackupProcess][Error] Failed to open Source file!\r\n");
+        cout << "[BackupProcess][Error] Failed to open Source file!" << endl;
         return false;
     }
     HANDLE fTo = CreateFile(toFile.c_str(), GENERIC_WRITE,
         FILE_SHARE_READ, NULL,CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (fTo == INVALID_HANDLE_VALUE)
     {
-        printf("[BackupProcess][Error] Failed to open Destination file!\r\n");
+        cout << "[BackupProcess][Error] Failed to open Destination file!" << endl;
         return false;
     }
  
@@ -130,13 +131,13 @@ bool copyFile(const wstring& fromFile, const wstring& toFile, long long size)
     {
         if (!ReadFile(fFrom, buffer, (size > BUFFER_SIZE) ? BUFFER_SIZE : (DWORD)size, &readCount, NULL))
         {
-            printf("[BackupProcess][Error] Failed in reading Source file!\r\n");
+            cout << "[BackupProcess][Error] Failed in reading Source file!" << endl;
             delete[] buffer;
             return false;
         }
         if(!WriteFile(fTo,buffer,readCount,&writeCount,NULL))
         {
-            printf("[BackupProcess][Error] Failed in writing Destination file!\r\n");
+            cout << "[BackupProcess][Error] Failed in writing Destination file!" << endl;
             delete[] buffer;
             return false;
         }
@@ -149,7 +150,7 @@ bool copyFile(const wstring& fromFile, const wstring& toFile, long long size)
     return true;
 }
 
-int clearOldBackup(wstring beforeTimestamp)
+int ClearOldBackup(wstring beforeTimestamp)
 {
     unsigned long long timeStamp = _wtoll(beforeTimestamp.c_str());
     wstring dirFind = BACKUP_PATH + L"*";
@@ -160,7 +161,7 @@ int clearOldBackup(wstring beforeTimestamp)
     HANDLE hFind = FindFirstFile(dirFind.c_str(), &findFileData);
     if (hFind == INVALID_HANDLE_VALUE)
     {
-        printf("[BackupProcess][Warning] Fail to locate old backups.\r\n");
+        cout << "[BackupProcess][Warning] Fail to locate old backups." << endl;
         return GetLastError();
     }
     do
@@ -173,120 +174,141 @@ int clearOldBackup(wstring beforeTimestamp)
             createTime.HighPart = findFileData.ftCreationTime.dwHighDateTime;
             if (createTime.QuadPart / 10000000 - 11644473600 < timeStamp)
             {
-                clearFile(BACKUP_PATH + findFileData.cFileName);
+                DelFile(BACKUP_PATH + findFileData.cFileName);
                 ++clearCount;
             }
         }
     } while (FindNextFile(hFind, &findFileData));
     FindClose(hFind);
     if(clearCount > 0)
-        printf("[BackupProcess][Info] %d old backups cleaned.\r\n",clearCount);
+        cout << "[BackupProcess][Info] " << clearCount << " old backups cleaned." << endl;
     return 0;
 }
 
 int wmain(int argc,wchar_t ** argv)
 {
-    //setlocale(LC_ALL, "");
-    setbuf(stdout, NULL);
-
-    //Init local config
+    //Read local config
     if (argc <= 1)
     {
-        printf("[BackupProcess][Error] Need config.ini as an argument!\r\n");
+        cout << "[BackupProcess][Error] Need config.ini as an argument!" << endl;
         exit(-1);
     }
     else
         CONFIG_PATH = wstring(argv[1]);
 
-    WORLD_PATH = readConfig(L"Core", L"WorldsPath", L".\\worlds\\");
-    if (WORLD_PATH[WORLD_PATH.size() - 1] != L'\\')
-        WORLD_PATH += L"\\";
-    BACKUP_PATH = readConfig(L"Core", L"BackupPath", L".\\backup\\");
-    if (BACKUP_PATH[BACKUP_PATH.size() - 1] != L'\\')
+    // Clear old backups
+    BACKUP_PATH = ReadConfig(L"Core", L"BackupPath", L".\\backup\\");
+    if (BACKUP_PATH.back() != L'\\')
         BACKUP_PATH += L"\\";
-    TMP_PATH = readConfig(L"Core", L"TempPath", L".\\plugins\\BackupHelper\\temp\\");
-    if (TMP_PATH[TMP_PATH.size() - 1] != L'\\')
-        TMP_PATH += L"\\";
-    ZIP_PATH = readConfig(L"Core", L"7zPath", L".\\plugins\\BackupHelper\\7za.exe");
-    END_RESULT = readConfig(L"Core", L"ResultPath", L".\\plugins\\BackupHelper\\end.res");
-    RECORD_FILE = readConfig(L"Core", L"BackupList", L"");
-    ZIP_LOG_PATH = readConfig(L"Core", L"7zLog", L"");
-
-    BUFFER_SIZE = readConfig(L"Core", L"BufferSize", 16384);
-    SHOW_COPY_PROCESS = bool(readConfig(L"Main", L"ShowBackupProcess", 1));
-    GROUP_OF_FILES = readConfig(L"Main", L"BackupProcessCount", 10);
-    MAX_ZIP_WAIT = readConfig(L"Core", L"MaxWaitForZip", 3600) * 1000;
-
     if (argc == 4 && wcscmp(argv[2], L"-c") == 0)
     {
-        return clearOldBackup(argv[3]);
+        return ClearOldBackup(argv[3]);
     }
 
+    // Get Record file
+    RECORD_FILE = ReadConfig(L"Core", L"BackupList", L"");
     if (RECORD_FILE.empty())
     {
         if (argc <= 2)
         {
-            printf("[BackupProcess][Error] Need more argument!\r\n");
-            failExit(-1);
+            cout << "[BackupProcess][Error] Need more argument!" << endl;
+            FailExit(-1);
         }
         else
             RECORD_FILE = wstring(argv[2]);
     }
 
+    WORLD_PATH = ReadConfig(L"Core", L"WorldsPath", L".\\worlds\\");
+    if (WORLD_PATH.back() != L'\\')
+        WORLD_PATH += L"\\";
+    TMP_PATH = ReadConfig(L"Core", L"TempPath", L".\\plugins\\BackupHelper\\temp\\");
+    if (TMP_PATH.back() != L'\\')
+        TMP_PATH += L"\\";
+    ZIP_PATH = ReadConfig(L"Core", L"7zPath", L".\\plugins\\BackupHelper\\7za.exe");
+    END_RESULT = ReadConfig(L"Core", L"ResultPath", L".\\plugins\\BackupHelper\\end.res");
+    
+    ZIP_LOG_PATH = ReadConfig(L"Core", L"7zLog", L"");
+    BUFFER_SIZE = ReadConfig(L"Core", L"BufferSize", 16384);
+    SHOW_COPY_PROCESS = bool(ReadConfig(L"Main", L"ShowBackupProcess", 1));
+    GROUP_OF_FILES = ReadConfig(L"Main", L"BackupProcessCount", 50);
+    MAX_ZIP_WAIT = ReadConfig(L"Core", L"MaxWaitForZip", 3600) * 1000;
+
 
 
     //Read record file and Copy Save files
-    printf("[BackupProcess] Backup process begin\r\n");
+    cout << "[BackupProcess] Backup process begin" << endl;
 
-    FILE* fp = _wfopen(RECORD_FILE.c_str(), L"r");
-    if (fp == NULL)
+    ifstream fin(RECORD_FILE);
+    if (!fin)
     {
-        printf("[BackupProcess][Error] Failed to open Record File!\r\n");
-        failExit(errno);
+        cout << "[BackupProcess][Error] Failed to open Record File!" << endl;
+        cout << strerror(errno) << endl;
+        FailExit(errno);
     }
-    wchar_t filePath[_MAX_PATH];
-    long long fileLength;
-    wchar_t saveName[_MAX_PATH], * from, * to = saveName;
-    int fileCount = 0;
-    while (fgetws(filePath, _MAX_PATH, fp) != NULL)
-    {
-        //Read
-        if (filePath[0] == L'\r' || filePath[0] == L'\n')
-            break;
-        ++fileCount;
-        transStr(filePath);
 
-        fwscanf_s(fp, L"%lld", &fileLength);
-        fgetwc(fp);      //Skip \n
+    string tmp;
+    wstring filePath;
+    long long fileLength;
+    wstring saveName;
+    int fileCount = 0;
+
+    cout << "[BackupProcess] Copying files..." << endl;
+    while (getline(fin, tmp))
+    {
+        //Read Path
+        if (tmp.empty())
+            break;
+#ifdef _DEBUG
+        cout << "[DEBUG] READ LINE: " << tmp << endl;
+#endif
+        filePath = U8str2wchar(tmp);
+        if (filePath.empty())
+        {
+            wcout << L"[BackupProcess][Error] Failed to transform from UTF-8!" << endl;
+            FailExit(GetLastError());
+        }
+        ++fileCount;
+
+        // change /
+        for (size_t i = 0; i < filePath.size(); ++i)
+            if (filePath[i] == L'/')
+                filePath[i] = L'\\';
+
+        //Read Length
+        fin >> fileLength;
+        getline(fin, tmp);
 
         //Get save name
         if (fileCount == 1)
         {
-            from = filePath;
-            while (*from != L'\\')
-                *to++ = *from++;
-            *to = '\0';
+            saveName = filePath.substr(0, filePath.find(L'\\'));
+#ifdef _DEBUG
+            wcout << L"[DEBUG] SaveName: " << filePath << endl;
+#endif
         }
+
         //Copy
         wstring fromFile = WORLD_PATH + filePath;
         wstring toFile = TMP_PATH + filePath;
-        //printf("[BackupProcess] Processing %s\r\n",filePath);
-        if (!copyFile(fromFile, toFile, fileLength))
+#ifdef _DEBUG
+        wcout << L"[BackupProcess] Processing " << filePath << endl;
+#endif
+        if (!CopyFile(fromFile, toFile, fileLength))
         {
-            wprintf(L"[BackupProcess][Error] Failed to copy %ws!\r\n", fromFile.c_str());
-            failExit(GetLastError());
+            wcout << L"[BackupProcess][Error] Failed to copy " << fromFile << L"!" << endl;
+            FailExit(GetLastError());
         }
         if (SHOW_COPY_PROCESS && fileCount % GROUP_OF_FILES == 0)
-            printf("[BackupProcess] %d files processed.\r\n", fileCount);
+            cout << "[BackupProcess] " << fileCount << " files processed." << endl;
     }
-    fclose(fp);
-    printf("[BackupProcess] All of %d files processed.\r\n", fileCount);
+    fin.close();
+    cout << "[BackupProcess] All of " << fileCount << " files processed." << endl;
 
 
 
     //Construct Cmdline
-    printf("[BackupProcess] Files copied. Zipping save files...\r\n");
-    printf("[BackupProcess] It may take a long time. Please be patient...\r\n");
+    cout << "[BackupProcess] Files copied. Zipping save files..." << endl;
+    cout << "[BackupProcess] It may take a long time. Please be patient..." << endl;
     wchar_t timeStr[32];
     time_t nowtime;
     time(&nowtime);
@@ -294,8 +316,12 @@ int wmain(int argc,wchar_t ** argv)
     wcsftime(timeStr, sizeof(timeStr), L"%Y-%m-%d-%H-%M-%S", info);
 
     wchar_t cmdStr[_MAX_PATH * 4];
-    wsprintf(cmdStr, L"%s a \"%s%s-%s.7z\" \"%s%s\" -sdel -mx1 -mmt",
-        ZIP_PATH.c_str(), BACKUP_PATH.c_str(), saveName, timeStr, TMP_PATH.c_str(), saveName);
+    wsprintf(cmdStr, L"%ls a \"%ls%ls-%ls.7z\" \"%ls%ls\" -sdel -mx1 -mmt"
+        ,ZIP_PATH.c_str(), BACKUP_PATH.c_str(), saveName.c_str(), timeStr
+        , TMP_PATH.c_str(), saveName.c_str());
+#ifdef _DEBUG
+    wcout << L"[DEBUG] CMD LINE: " << cmdStr << endl;
+#endif
 
     //Prepare for output
     STARTUPINFO si = { sizeof(STARTUPINFO) };
@@ -324,16 +350,16 @@ int wmain(int argc,wchar_t ** argv)
     ZeroMemory(&pi, sizeof(pi));
     if (!CreateProcessW(NULL, cmdStr, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi))
     {
-        printf("[BackupProcess][Error] Failed to Zip save files!\r\n");
-        failExit(GetLastError());
+        cout << "[BackupProcess][Error] Failed to Zip save files!" << endl;
+        FailExit(GetLastError());
     }
     WaitForSingleObject(pi.hProcess, MAX_ZIP_WAIT);
     CloseHandle(hZipOutput);
 
     //Flag to success
-    printf("[BackupProcess][Info] Success to Backup.\r\n");
-    fp = _wfopen(END_RESULT.c_str(), L"w");
-    fputs("0", fp);
-    fclose(fp);
+    cout << "[BackupProcess][Info] Success to Backup." << endl;
+    ofstream fout(END_RESULT);
+    fout.put('0');
+    fout.close();
     return 0;
 }
