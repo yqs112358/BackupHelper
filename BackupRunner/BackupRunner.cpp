@@ -9,6 +9,7 @@
 #include <fstream>
 #include <windows.h>
 #include <ctime>
+#include <cstdio>
 
 using namespace std;
 
@@ -105,49 +106,6 @@ void FailExit(int code)
 
     fflush(stdout);
     exit(code);
-}
-
-bool CopyFile(const wstring& fromFile, const wstring& toFile, long long size)
-{
-    HANDLE fFrom = CreateFile(fromFile.c_str(), GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (fFrom == INVALID_HANDLE_VALUE)
-    {
-        cout << "[BackupProcess][Error] Failed to open Source file!" << endl;
-        return false;
-    }
-    HANDLE fTo = CreateFile(toFile.c_str(), GENERIC_WRITE,
-        FILE_SHARE_READ, NULL,CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (fTo == INVALID_HANDLE_VALUE)
-    {
-        cout << "[BackupProcess][Error] Failed to open Destination file!" << endl;
-        return false;
-    }
- 
-    char *buffer = new char[BUFFER_SIZE];
-    DWORD readCount, writeCount;
-    while (size > 0)
-    {
-        if (!ReadFile(fFrom, buffer, (size > BUFFER_SIZE) ? BUFFER_SIZE : (DWORD)size, &readCount, NULL))
-        {
-            cout << "[BackupProcess][Error] Failed in reading Source file!" << endl;
-            delete[] buffer;
-            return false;
-        }
-        if(!WriteFile(fTo,buffer,readCount,&writeCount,NULL))
-        {
-            cout << "[BackupProcess][Error] Failed in writing Destination file!" << endl;
-            delete[] buffer;
-            return false;
-        }
-        size -= readCount;
-    }
-
-    CloseHandle(fFrom);
-    CloseHandle(fTo);
-    delete[] buffer;
-    return true;
 }
 
 int ClearOldBackup(wstring beforeTimestamp)
@@ -293,11 +251,26 @@ int wmain(int argc,wchar_t ** argv)
 #ifdef _DEBUG
         wcout << L"[BackupProcess] Processing " << filePath << endl;
 #endif
-        if (!CopyFile(fromFile, toFile, fileLength))
+        if (!CopyFile(fromFile.c_str(), toFile.c_str(),false))
         {
             wcout << L"[BackupProcess][Error] Failed to copy " << fromFile << L"!" << endl;
             FailExit(GetLastError());
         }
+
+        //Truncate
+        LARGE_INTEGER pos;
+        pos.QuadPart = fileLength;
+        LARGE_INTEGER curPos;
+        HANDLE hSaveFile = CreateFileW(toFile.c_str(), GENERIC_READ | GENERIC_WRITE,
+            0, NULL, OPEN_EXISTING, 0, 0);
+        if (hSaveFile == INVALID_HANDLE_VALUE
+            || !SetFilePointerEx(hSaveFile, pos, &curPos, FILE_BEGIN)
+            || !SetEndOfFile(hSaveFile))
+        {
+            wcout << L"[BackupProcess][Error] Failed to truncate " << fromFile << L"!" << endl;
+            FailExit(GetLastError());
+        }
+        CloseHandle(hSaveFile);
         if (SHOW_COPY_PROCESS && fileCount % GROUP_OF_FILES == 0)
             cout << "[BackupProcess] " << fileCount << " files processed." << endl;
     }

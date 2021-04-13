@@ -3,7 +3,7 @@
 // 作者：yqs112358
 // 首发平台：MineBBS
 
-var _VER = '1.3.5';
+var _VER = '1.3.6';
 var _CONFIG_FILE = '.\\plugins\\BackupHelper\\config.ini'
 
 var waitingRecord = false;
@@ -45,6 +45,23 @@ function buildDirTree(dest) {
     return true;
 }
 
+function fixSystemCmdPrivilege()
+{
+    //NETJSR
+    let confStr = fileReadAllText(".\\plugins\\settings\\netjs.ini");
+	if (confStr != null && confStr.length > 0)
+    {
+        fileWriteAllText(".\\plugins\\settings\\netjs.ini", confStr.replace("enableSystemCmd=0","enableSystemCmd=1"));
+    }
+    //PFJSR
+    confStr = fileReadAllText(".\\plugins\\PFJSR\\config.json");
+	if (confStr != null && confStr.length > 0) {
+		conf = JSON.parse(confStr);
+        conf.JSR.SystemCmdEnabled = true;
+        fileWriteAllText(".\\plugins\\PFJSR\\config.json", JSON.stringify(conf, null, 4));
+    }
+}
+
 function initLocalConfig() {
     if(typeof(systemCmd) != "function")
     {
@@ -57,15 +74,17 @@ function initLocalConfig() {
 
     try
     {
-        systemCmd('ver > nul',function(e){});
+        if(!systemCmd('ver > nul',function(e){}))
+            throw new Error("Fix systemcmd");
     }
     catch(e)
     {
-        _LOG("[FATAL] ================== 加载失败 ==================");
-        _LOG("[FATAL] 您的JsRunner未启用 系统命令功能，备份插件无法工作");
-        _LOG("[FATAL] 请到相应的配置文件中启用SystemCmdEnabled设置项后再加载此插件");
+        fixSystemCmdPrivilege()
+        _LOG("[FATAL] ================== 需要重启 ==================");
+        _LOG("[FATAL] 您的JsRunner未启用 系统命令功能，备份插件加载异常");
+        _LOG("[FATAL] 插件已打开相关选项开关。重新启动服务器即可正常工作");
         _LOG("[FATAL] ============================================");
-        throw new Error("请启用SystemCmd函数权限！");
+        throw new Error("请重新启动服务器以启用本插件！");
     }
 
     mkdir('.\\plugins');
