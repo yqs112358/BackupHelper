@@ -10,6 +10,8 @@
 #include <windows.h>
 #include <ctime>
 #include <cstdio>
+#include <cmath>
+#include <vector>
 
 using namespace std;
 
@@ -21,7 +23,6 @@ wstring ZIP_PATH;
 wstring ZIP_LOG_PATH;
 wstring END_RESULT;
 wstring RECORD_FILE;
-int BUFFER_SIZE;
 bool SHOW_COPY_PROCESS;
 int GROUP_OF_FILES;
 int MAX_ZIP_WAIT;
@@ -143,8 +144,41 @@ int ClearOldBackup(wstring beforeTimestamp)
     return 0;
 }
 
+DWORD ControlResourceUsage()
+{
+    //Job
+    HANDLE hJob = CreateJobObject(NULL, L"BACKUP_HELPER_HELP_PROGRAM");
+    if (hJob > 0)
+    {
+        JOBOBJECT_BASIC_LIMIT_INFORMATION limit = { 0 };
+        limit.PriorityClass = BELOW_NORMAL_PRIORITY_CLASS;
+        limit.LimitFlags = JOB_OBJECT_LIMIT_PRIORITY_CLASS;
+
+        SetInformationJobObject(hJob, JobObjectBasicLimitInformation, &limit, sizeof(limit));
+        AssignProcessToJobObject(hJob, GetCurrentProcess());
+    }
+
+    //CPU Limit
+    SYSTEM_INFO si;
+    memset(&si, 0, sizeof(SYSTEM_INFO));
+    GetSystemInfo(&si);
+    DWORD cpuCnt = si.dwNumberOfProcessors;
+    DWORD cpuMask = 1;
+    if (cpuCnt > 1)
+    {
+        if (cpuCnt % 2 == 1)
+            cpuCnt -= 1;
+        cpuMask = sqrt(1 << cpuCnt) - 1;    //sqrt(2^n)-1
+    }
+    SetProcessAffinityMask(GetCurrentProcess(), cpuMask);
+
+    return cpuMask;
+}
+
 int wmain(int argc,wchar_t ** argv)
 {
+    DWORD cpuMask = ControlResourceUsage();
+
     //Read local config
     if (argc <= 1)
     {
@@ -186,10 +220,9 @@ int wmain(int argc,wchar_t ** argv)
     END_RESULT = ReadConfig(L"Core", L"ResultPath", L".\\plugins\\BackupHelper\\end.res");
     
     ZIP_LOG_PATH = ReadConfig(L"Core", L"7zLog", L"");
-    BUFFER_SIZE = ReadConfig(L"Core", L"BufferSize", 16384);
     SHOW_COPY_PROCESS = bool(ReadConfig(L"Main", L"ShowBackupProcess", 1));
     GROUP_OF_FILES = ReadConfig(L"Main", L"BackupProcessCount", 50);
-    MAX_ZIP_WAIT = ReadConfig(L"Core", L"MaxWaitForZip", 3600) * 1000;
+    MAX_ZIP_WAIT = ReadConfig(L"Core", L"MaxWaitForZip", 1800) * 1000;
 
 
 
@@ -211,6 +244,14 @@ int wmain(int argc,wchar_t ** argv)
     int fileCount = 0;
 
     cout << "[BackupProcess] Copying files..." << endl;
+
+    struct TuncInfo
+    {
+        wstring toFile;
+        long long fileLength;
+    };
+    vector<TuncInfo> tunc;
+
     while (getline(fin, tmp))
     {
         //Read Path
@@ -256,32 +297,43 @@ int wmain(int argc,wchar_t ** argv)
             wcout << L"[BackupProcess][Error] Failed to copy " << fromFile << L"!" << endl;
             FailExit(GetLastError());
         }
+        tunc.push_back({ toFile,fileLength });
 
-        //Truncate
+        if (SHOW_COPY_PROCESS && fileCount % GROUP_OF_FILES == 0)
+            cout << "[BackupProcess] " << fileCount << " files processed." << endl;
+
+        //Sleep
+        Sleep(5);
+    }
+    fin.close();
+
+    ofstream fout(END_RESULT);
+    fout.close();
+    cout << "[BackupProcess] All of " << fileCount << " files processed." << endl;
+
+
+    cout << "[BackupProcess] Files copied. Zipping save files..." << endl;
+    cout << "[BackupProcess] It may take a long time. Please be patient..." << endl;
+
+    //Truncate
+    for (auto& id : tunc)
+    {
         LARGE_INTEGER pos;
-        pos.QuadPart = fileLength;
+        pos.QuadPart = id.fileLength;
         LARGE_INTEGER curPos;
-        HANDLE hSaveFile = CreateFileW(toFile.c_str(), GENERIC_READ | GENERIC_WRITE,
+        HANDLE hSaveFile = CreateFileW(id.toFile.c_str(), GENERIC_READ | GENERIC_WRITE,
             0, NULL, OPEN_EXISTING, 0, 0);
         if (hSaveFile == INVALID_HANDLE_VALUE
             || !SetFilePointerEx(hSaveFile, pos, &curPos, FILE_BEGIN)
             || !SetEndOfFile(hSaveFile))
         {
-            wcout << L"[BackupProcess][Error] Failed to truncate " << fromFile << L"!" << endl;
+            wcout << L"[BackupProcess][Error] Failed to truncate " << id.toFile << L"!" << endl;
             FailExit(GetLastError());
         }
         CloseHandle(hSaveFile);
-        if (SHOW_COPY_PROCESS && fileCount % GROUP_OF_FILES == 0)
-            cout << "[BackupProcess] " << fileCount << " files processed." << endl;
     }
-    fin.close();
-    cout << "[BackupProcess] All of " << fileCount << " files processed." << endl;
 
-
-
-    //Construct Cmdline
-    cout << "[BackupProcess] Files copied. Zipping save files..." << endl;
-    cout << "[BackupProcess] It may take a long time. Please be patient..." << endl;
+    //Get Name
     wchar_t timeStr[32];
     time_t nowtime;
     time(&nowtime);
@@ -321,18 +373,22 @@ int wmain(int argc,wchar_t ** argv)
     //Create zip process
     PROCESS_INFORMATION pi;
     ZeroMemory(&pi, sizeof(pi));
-    if (!CreateProcessW(NULL, cmdStr, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi))
+    if (!CreateProcessW(NULL, cmdStr, NULL, NULL, TRUE, CREATE_SUSPENDED, NULL, NULL, &si, &pi))
     {
         cout << "[BackupProcess][Error] Failed to Zip save files!" << endl;
         FailExit(GetLastError());
     }
+    SetProcessAffinityMask(pi.hProcess, cpuMask);
+    ResumeThread(pi.hThread);
+
     WaitForSingleObject(pi.hProcess, MAX_ZIP_WAIT);
     CloseHandle(hZipOutput);
 
     //Flag to success
     cout << "[BackupProcess][Info] Success to Backup." << endl;
-    ofstream fout(END_RESULT);
+    fout.open(END_RESULT);
     fout.put('0');
+    fout.flush();
     fout.close();
     return 0;
 }

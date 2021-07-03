@@ -3,7 +3,7 @@
 // 作者：yqs112358
 // 首发平台：MineBBS
 
-var _VER = '1.3.6';
+var _VER = '1.3.8';
 var _CONFIG_FILE = '.\\plugins\\BackupHelper\\config.ini'
 
 var waitingRecord = false;
@@ -166,9 +166,9 @@ function startBackup()
         isBackuping = true;
         clearOldBackup();
 
-        let res = fileReadAllText(_BACKUP_RESULT);
-        if (res != null)
-            systemCmd('del ' + _BACKUP_RESULT, function(e){} );
+        systemCmd('del ' + _BACKUP_LIST + ' 2>nul' , function(e){} );
+        systemCmd('del ' + _BACKUP_RESULT + ' 2>nul', function(e){} );
+        systemCmd('rd /S /Q ' + _TEMP_PATH + ' 2>nul', function(e){} )
 
         res = runcmd('save hold');
         if (!res)
@@ -181,12 +181,11 @@ function startBackup()
     }
 }
 
-function resumeBackup() {
+function endBackup()
+{
     let res = fileReadAllText(_BACKUP_RESULT);
-    if (res == null)
-        setTimeout(resumeBackup, 5000);
-    else {
-        runcmd('save resume');
+    if(res != null && res != "")
+    {
         if (res == "0")
         {
             _LOG('[Info] 备份成功结束。');
@@ -195,7 +194,26 @@ function resumeBackup() {
         }
         else
             _LOG('[Error] 备份失败！错误码：' + res);
-        systemCmd('rd /S /Q ' + _TEMP_PATH, function(e){} )
+        
+        systemCmd('rd /S /Q ' + _TEMP_PATH, function(e){} );
+        isBackuping = false;
+    }
+    setTimeout(endBackup, 5000);
+}
+
+function resumeBackup()
+{
+    let res = fileReadAllText(_BACKUP_RESULT);
+    if (res == null)
+        setTimeout(resumeBackup, 3000);
+    else if(res == "")
+    {
+        runcmd('save resume');
+        setTimeout(endBackup, 5000);
+    }
+    else
+    {
+        _LOG("发生未知错误！");
         isBackuping = false;
     }
 }
@@ -222,6 +240,12 @@ addBeforeActListener('onServerCmd', function (e) {
     {
         _LOG('重新加载配置文件...');
         initLocalConfig();
+        return false;
+    }
+    else if (cmd == 'backup cancel')
+    {
+        isBackuping = waitingRecord = false;
+        _LOG('插件已复位。');
         return false;
     }
     return true;
@@ -272,7 +296,7 @@ addBeforeActListener('onServerCmdOutput', function (e) {
         }
         _LOG('[Info] 完毕。备份进程工作中');
 
-        setTimeout(resumeBackup, 5000);
+        setTimeout(resumeBackup, 3000);
         return false;
     }
 });
