@@ -197,6 +197,7 @@ function endBackup()
         
         systemCmd('rd /S /Q ' + _TEMP_PATH, function(e){} );
         isBackuping = false;
+        return;
     }
     setTimeout(endBackup, 5000);
 }
@@ -210,6 +211,10 @@ function resumeBackup()
     {
         runcmd('save resume');
         setTimeout(endBackup, 5000);
+    }
+    else if(res == "0")
+    {
+        endBackup();
     }
     else
     {
